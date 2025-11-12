@@ -6,14 +6,52 @@ Simple Facebook scraper - minimalist approach.
 import asyncio
 import argparse
 import re
-import time
-import json
-from datetime import datetime
 from pathlib import Path
 from playwright.async_api import async_playwright
+import os
+from pathlib import Path
+import uuid
 
 # Pattern to match Dutch comment text
 COMMENT_TEXT_PATTERN = re.compile(r"\d+\s+opmerkingen?", re.IGNORECASE)
+MAX_POST_SCROLL = 10
+MAX_FEED_SCROLL = ...
+dir = Path('screenshots')
+if not os.path.exists(dir):
+    os.makedirs(dir)
+
+
+async def parse_post(page):
+    _id = str(uuid.uuid4())
+    post_dir = dir / _id
+    os.makedirs(post_dir)
+    for i in range(MAX_POST_SCROLL):
+        ...
+        # take screenshot, save to post_dir / f'{i}.png'
+        # scroll down (but need to finetune at what (x,y) we scroll down)
+    print(_id)
+    exit()
+    ...
+
+
+async def handle_saving(button, page):
+    """Click the button, scroll while taking screenshots, parse, close by clicking on (0,0)"""
+    try:
+        # Click the comment button
+        await button.click()
+        print("      🖱️  Clicked button, waiting 3s...")
+
+        # Wait 3 seconds
+        await asyncio.sleep(3)
+
+        await parse_post(page)
+
+        # Click at (0,0) to close
+        await page.mouse.click(0, 0)
+        print("      ❌ Closed by clicking (0,0)")
+
+    except Exception as e:
+        print(f"      ⚠️  Error in handle_saving: {e}")
 
 
 async def main():
@@ -55,9 +93,6 @@ async def main():
         print("🔍 Starting to look for comment buttons...")
 
         seen_texts = set()  # Track text we've seen for uniqueness check
-        all_buttons = []  # Store all button data (text, is_unique, metadata)
-        total_count = 0
-
         scroll_since_update = 0
 
         while True:
@@ -70,71 +105,32 @@ async def main():
                 try:
                     text = (await button.inner_text()).strip()
                     if COMMENT_TEXT_PATTERN.search(text):
+                        # TODO: improve uniqueness check - text alone isn't sufficient since multiple posts can have same comment count
+
                         # Check if unique by text
-                        is_unique = text not in seen_texts
-                        if is_unique:
+                        if text not in seen_texts:
                             seen_texts.add(text)
                             current_found += 1
                             print(f"   ✅ Found #{len(seen_texts)}: '{text}'")
-
-                        # Collect metadata
-                        metadata = {}
-                        try:
-                            bbox = await button.bounding_box()
-                            if bbox:
-                                metadata['position'] = {'x': bbox['x'], 'y': bbox['y'], 'width': bbox['width'], 'height': bbox['height']}
-                        except:
-                            pass
-
-                        # Get parent content (3 levels up)
-                        try:
-                            parent1 = await button.evaluate("el => el.parentElement?.textContent?.slice(0, 200)")
-                            parent2 = await button.evaluate("el => el.parentElement?.parentElement?.textContent?.slice(0, 200)")
-                            parent3 = await button.evaluate("el => el.parentElement?.parentElement?.parentElement?.textContent?.slice(0, 200)")
-                            metadata['parents'] = {'parent1': parent1, 'parent2': parent2, 'parent3': parent3}
-                        except:
-                            pass
-
-                        metadata['timestamp'] = datetime.now().isoformat()
-                        metadata['scroll_iteration'] = total_count // 10  # Rough scroll position
-
-                        # Store tuple: (text, is_unique, metadata)
-                        all_buttons.append((text, is_unique, metadata))
-                        total_count += 1
+                            await handle_saving(button, page)
 
                 except:
                     continue
 
             if current_found > 0:
                 scroll_since_update = 0
-                print(f"   📊 Total unique buttons found: {len(seen_texts)} (total seen: {total_count})")
+                print(f"   📊 Total unique buttons found: {len(seen_texts)}")
 
             scroll_since_update += 1
             if scroll_since_update > 10:
-                print(f"✅ No new buttons found for 5s. Stopping.")
+                print(f"✅ No new buttons found for 10 iterations. Stopping.")
                 break
 
             # Scroll down
             await page.mouse.wheel(0, 1000)
             await asyncio.sleep(0.5)
 
-        # Save data to JSON
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        output_file = f"comment_buttons_{args.keyword}_{timestamp}.json"
-
-        output_data = {
-            'keyword': args.keyword,
-            'session_timestamp': timestamp,
-            'total_buttons': total_count,
-            'unique_by_text': len(seen_texts),
-            'buttons': all_buttons
-        }
-
-        with open(output_file, 'w') as f:
-            json.dump(output_data, f, indent=2)
-
-        print(f"\n🎉 Final count: {len(seen_texts)} unique comment buttons ({total_count} total)")
-        print(f"💾 Data saved to: {output_file}")
+        print(f"\n🎉 Final count: {len(seen_texts)} unique comment buttons found")
         await browser.close()
 
 
