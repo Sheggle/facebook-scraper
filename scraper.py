@@ -25,13 +25,16 @@ async def parse_post(page):
     _id = str(uuid.uuid4())
     post_dir = dir / _id
     os.makedirs(post_dir)
+    await page.mouse.move(640, 360)
     for i in range(MAX_POST_SCROLL):
-        ...
         # take screenshot, save to post_dir / f'{i}.png'
+        await page.screenshot(path=str(post_dir / f'{i}.png'))
+        print(f"        📸 Screenshot {i+1}/{MAX_POST_SCROLL} saved")
+
         # scroll down (but need to finetune at what (x,y) we scroll down)
-    print(_id)
-    exit()
-    ...
+        await page.mouse.wheel(0, 300)  # TODO: finetune scroll coordinates and amount
+        await asyncio.sleep(0.5)
+    await page.mouse.move(0, 0)
 
 
 async def handle_saving(button, page):
