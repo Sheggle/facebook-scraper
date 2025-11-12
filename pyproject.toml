@@ -1,0 +1,10 @@
+[project]
+name = "facebook-scraper"
+version = "0.1.0"
+description = "Facebook scraper using Playwright for human-like browsing"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "playwright>=1.40.0",
+    "asyncio",
+]
