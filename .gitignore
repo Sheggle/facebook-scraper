@@ -1,6 +1,7 @@
 *.png
 *.json
 browser_state/
+screenshots/
 
 # Python-generated files
 __pycache__/

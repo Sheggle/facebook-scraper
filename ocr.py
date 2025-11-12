@@ -1,0 +1,362 @@
+#!/usr/bin/env python3
+"""
+OCR script to process screenshots from scraper.py output.
+"""
+
+import argparse
+import easyocr
+import json
+from pathlib import Path
+from PIL import Image, ImageDraw, ImageFont
+from difflib import SequenceMatcher
+
+
+def text_similarity(text1, text2):
+    """
+    Calculate normalized similarity score (0-1, higher is better) using SequenceMatcher.
+    Returns 1.0 for identical strings, approaching 0.0 for completely different strings.
+    """
+    matcher = SequenceMatcher(None, text1, text2)
+    return matcher.ratio()
+
+
+def apply_offset(image_data, y_offset):
+    """
+    Apply Y-coordinate offset to all detections in an image.
+    Creates a new image_data dict with adjusted coordinates.
+    """
+    adjusted_image = {
+        "filename": image_data["filename"],
+        "detections": []
+    }
+
+    # Add error field if it exists
+    if "error" in image_data:
+        adjusted_image["error"] = image_data["error"]
+
+    for detection in image_data["detections"]:
+        adjusted_detection = detection.copy()
+
+        # Adjust bbox coordinates
+        adjusted_detection["bbox"] = {
+            "x1": detection["bbox"]["x1"],
+            "x2": detection["bbox"]["x2"],
+            "y1": detection["bbox"]["y1"] + y_offset,
+            "y2": detection["bbox"]["y2"] + y_offset
+        }
+
+        # Adjust bbox_points coordinates
+        adjusted_detection["bbox_points"] = [
+            [point[0], point[1] + y_offset] for point in detection["bbox_points"]
+        ]
+
+        adjusted_image["detections"].append(adjusted_detection)
+
+    return adjusted_image
+
+
+def find_y_offset(prev_image, curr_image):
+    """
+    Find Y-coordinate offset between consecutive images using text overlaps.
+    Returns tuple (offset, merge_y1) if overlaps are found, (None, None) if no valid overlaps exist.
+    merge_y1 is the Y1 coordinate where images should be merged.
+    """
+    prev_detections = prev_image["detections"]
+    curr_detections = curr_image["detections"]
+
+    if not prev_detections or not curr_detections:
+        return None, None
+
+    used_prev_indices = set()
+
+    for curr_det in curr_detections:
+        best_match = None
+        best_score = 0
+
+        for prev_idx, prev_det in enumerate(prev_detections):
+            if prev_idx in used_prev_indices:
+                continue
+
+            # Check text similarity (require 0.9 minimum)
+            score = text_similarity(curr_det["text"], prev_det["text"])
+            if score < 0.9:
+                continue
+
+            # Check x1 coordinate proximity (within 10 pixels)
+            x1_diff = abs(curr_det["bbox"]["x1"] - prev_det["bbox"]["x1"])
+            if x1_diff > 10:
+                continue
+
+            if score > best_score:
+                best_match = (prev_idx, prev_det)
+                best_score = score
+
+        if best_match:
+            prev_idx, prev_det = best_match
+            used_prev_indices.add(prev_idx)
+
+            # Calculate y_mid for both detections
+            curr_y_mid = (curr_det["bbox"]["y1"] + curr_det["bbox"]["y2"]) / 2
+            prev_y_mid = (prev_det["bbox"]["y1"] + prev_det["bbox"]["y2"]) / 2
+
+            # Return the offset and merge point Y1 coordinate
+            offset = prev_y_mid - curr_y_mid
+            merge_y1 = prev_det["bbox"]["y1"]  # Use Y1 of overlapping box as merge point
+            return offset, merge_y1
+
+    # No valid overlaps found
+    return None, None
+
+
+def align_images_to_base(ocr_results, folder_path, annotated_dir):
+    """
+    Align all images to the coordinate system of image 0 using text overlap detection.
+    Also creates a combined image showing the complete scrolled content.
+
+    Args:
+        ocr_results: List of image OCR results from individual processing
+        folder_path: Path to original images folder
+        annotated_dir: Path to output directory for combined image
+
+    Returns:
+        List of aligned image results where all coordinates are relative to image 0
+
+    Raises:
+        ValueError: If no overlaps found between any consecutive images
+    """
+    if len(ocr_results) < 2:
+        return ocr_results
+
+    print("\n🔄 Starting image alignment and combination...")
+
+    # Load all images for combining
+    image_files = []
+    for result in ocr_results:
+        image_path = folder_path / result["filename"]
+        img = Image.open(image_path)
+        image_files.append(img)
+
+    # Initialize with first image
+    combined_img = image_files[0].copy()
+
+    aligned_results = [ocr_results[0]]  # Image 0 is the base - keep unchanged
+    cumulative_offset = 0
+
+    for i in range(1, len(ocr_results)):
+        prev_image = ocr_results[i-1]  # Previous image in original coordinate system
+        curr_image = ocr_results[i]    # Current image to align
+
+        print(f"  🔍 Aligning image {i} with image {i-1}...")
+
+        # Find Y-offset and merge point between consecutive images
+        result = find_y_offset(prev_image, curr_image)
+        print(result)
+
+        if result[0] is None:
+            raise ValueError(f"No overlaps found between image {i-1} and {i}. Alignment failed.")
+
+        offset, merge_y1 = result
+
+        # Update cumulative offset (relative to base image 0)
+        cumulative_offset += offset
+
+        print(f"    📐 Offset: {offset:.2f}px, Merge at Y1: {merge_y1:.2f}px, Cumulative: {cumulative_offset:.2f}px")
+
+        # Apply cumulative offset to align with base coordinate system
+        adjusted_image = apply_offset(curr_image, cumulative_offset)
+        aligned_results.append(adjusted_image)
+
+        # Combine images using merge point
+        curr_img = image_files[i]
+
+        # Create new canvas size to accommodate combined image
+        current_height = combined_img.height
+
+        new_canvas = Image.new('RGB', (combined_img.width, int(cumulative_offset + curr_img.height)), 'white')
+
+        print(cumulative_offset - offset + merge_y1)
+
+        # Paste existing combined image at top
+        cropped_combined = combined_img.crop((0, 0, combined_img.width, int(cumulative_offset - offset + merge_y1)))
+        new_canvas.paste(cropped_combined, (0, 0))
+
+        # Crop and paste current image below merge point
+        cropped_curr = curr_img.crop((0, int(merge_y1 - offset), curr_img.width, curr_img.height))
+        print(cropped_curr.height, cropped_curr.width)
+        print(cropped_combined.height, cropped_combined.width)
+        print(new_canvas.height, new_canvas.width)
+        new_canvas.paste(cropped_curr, (0, cropped_combined.height))
+
+        # Draw boundary line
+        from PIL import ImageDraw
+        draw = ImageDraw.Draw(new_canvas)
+        draw.line([(0, cropped_combined.height), (new_canvas.width, cropped_combined.height)], fill='red', width=2)
+
+        combined_img = new_canvas
+
+    # Save combined image
+    combined_path = annotated_dir / "combined.png"
+    combined_img.save(combined_path)
+    print(f"🖼️  Combined image saved: {combined_path}")
+
+    # Draw all aligned bounding boxes on the combined image
+    print("🎯 Drawing aligned bounding boxes on combined image...")
+    draw = ImageDraw.Draw(combined_img)
+    font = ImageFont.truetype("Arial.ttf", 16)
+
+    # Draw bounding boxes for all aligned detections
+    total_boxes = 0
+    for image_idx, image_result in enumerate(aligned_results):
+        for detection in image_result["detections"]:
+            bbox = detection["bbox"]
+            text = detection["text"]
+
+            # Draw red bounding box
+            draw.rectangle([bbox["x1"], bbox["y1"], bbox["x2"], bbox["y2"]],
+                          outline="red", width=2)
+
+            # Draw text above the bounding box
+            text_y = max(0, bbox["y1"] - 20)  # Position above box, but not off screen
+            draw.text((bbox["x1"], text_y), text, fill="red", font=font)
+
+            total_boxes += 1
+
+    # Save annotated combined image
+    annotated_combined_path = annotated_dir / "combined_with_boxes.png"
+    combined_img.save(annotated_combined_path)
+    print(f"📦 Combined image with {total_boxes} bounding boxes saved: {annotated_combined_path}")
+
+    print(f"✅ Successfully aligned {len(aligned_results)} images to unified coordinate system")
+    return aligned_results
+
+
+def main():
+    parser = argparse.ArgumentParser(description='OCR processor for Facebook screenshots')
+    parser.add_argument('folder', help='Folder containing ordered images (0.png, 1.png, etc.)')
+    args = parser.parse_args()
+
+    folder_path = Path(args.folder)
+
+    if not folder_path.exists():
+        print(f"❌ Folder not found: {folder_path}")
+        return
+
+    # Initialize EasyOCR reader for Dutch and English
+    print("🔍 Initializing EasyOCR (Dutch + English)...")
+    reader = easyocr.Reader(['en', 'nl'])
+
+    # Get all PNG files and sort them numerically
+    image_files = sorted(folder_path.glob("*.png"), key=lambda x: int(x.stem))
+
+    if not image_files:
+        print(f"❌ No PNG files found in {folder_path}")
+        return
+
+    print(f"📸 Found {len(image_files)} images to process")
+
+    # Create annotated output folder
+    annotated_dir = Path("annotated") / folder_path.name
+    annotated_dir.mkdir(parents=True, exist_ok=True)
+    print(f"📁 Output folder: {annotated_dir}")
+
+    # Store all OCR results for JSON export
+    ocr_results = []
+
+    # Process each image in order
+    for image_file in image_files:
+        print(f"\n" + "="*60)
+        print(f"📄 Processing: {image_file.name}")
+        print("="*60)
+
+        # Run OCR on the image
+        result = reader.readtext(str(image_file))
+
+        # Filter to only include content area (main Facebook content column)
+        filtered_result = []
+        for bbox, text, confidence in result:
+            # Extract bounding box coordinates
+            x_coords = [point[0] for point in bbox]
+            y_coords = [point[1] for point in bbox]
+            x1, x2 = min(x_coords), max(x_coords)
+            y1, y2 = min(y_coords), max(y_coords)
+
+            # Check if bounding box is entirely within content area
+            if (x1 >= 280 and x2 <= 1020 and y1 >= 90 and y2 <= 580):
+                filtered_result.append((bbox, text, confidence))
+
+        # Use filtered result for all further processing
+        result = filtered_result
+        print(f"  📍 Filtered to {len(result)} detections in content area")
+
+        # Prepare data for JSON export
+        image_data = {
+            "filename": image_file.name,
+            "detections": []
+        }
+
+        # Load image for annotation
+        img = Image.open(image_file)
+        draw = ImageDraw.Draw(img)
+
+        font = ImageFont.truetype("Arial.ttf", 16)
+
+        # Print detected text and draw annotations
+        if result:
+            for i, (bbox, text, confidence) in enumerate(result):
+                print(f"  [{i+1}] {text} (confidence: {confidence:.2f})")
+
+                # Extract bounding box coordinates
+                # bbox is [(x1,y1), (x2,y2), (x3,y3), (x4,y4)]
+                x_coords = [point[0] for point in bbox]
+                y_coords = [point[1] for point in bbox]
+                x1, x2 = min(x_coords), max(x_coords)
+                y1, y2 = min(y_coords), max(y_coords)
+
+                # Store detection data for JSON (convert numpy types to Python types)
+                detection = {
+                    "text": text,
+                    "confidence": float(confidence),
+                    "bbox": {
+                        "x1": float(x1), "y1": float(y1), "x2": float(x2), "y2": float(y2)
+                    },
+                    "bbox_points": [[float(point[0]), float(point[1])] for point in bbox]
+                }
+                image_data["detections"].append(detection)
+
+                # Draw red bounding box
+                draw.rectangle([x1, y1, x2, y2], outline="red", width=2)
+
+                # Draw text above the bounding box
+                text_y = max(0, y1 - 20)  # Position above box, but not off screen
+                draw.text((x1, text_y), text, fill="red", font=font)
+
+            # Save annotated image
+            output_file = annotated_dir / image_file.name
+            img.save(output_file)
+            print(f"  💾 Saved annotated image: {output_file}")
+
+        else:
+            print("  No text detected")
+            # Still save the image (without annotations)
+            output_file = annotated_dir / image_file.name
+            img.save(output_file)
+
+        # Add image data to results
+        ocr_results.append(image_data)
+
+    # Align all images to unified coordinate system
+    aligned_results = align_images_to_base(ocr_results, folder_path, annotated_dir)
+
+    # Save aligned OCR results as JSON
+    json_file = annotated_dir / "ocr_results.json"
+    with open(json_file, 'w', encoding='utf-8') as f:
+        json.dump(aligned_results, f, indent=2, ensure_ascii=False)
+
+    # combine images
+
+    print(f"\n✅ Finished processing {len(image_files)} images")
+    print(f"📄 OCR results saved to: {json_file}")
+
+
+if __name__ == "__main__":
+    main()
