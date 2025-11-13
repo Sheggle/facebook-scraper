@@ -10,6 +10,11 @@ from pathlib import Path
 from PIL import Image, ImageDraw, ImageFont
 from difflib import SequenceMatcher
 
+POST_BOUNDARY_X1 = 280
+POST_BOUNDARY_X2 = 1020
+POST_BOUNDARY_Y1 = 90
+POST_BOUNDARY_Y2 = 580
+
 
 def text_similarity(text1, text2):
     """
@@ -177,7 +182,8 @@ def align_images_to_base(ocr_results, folder_path, annotated_dir):
         print(result)
 
         if result[0] is None:
-            raise ValueError(f"No overlaps found between image {i-1} and {i}. Alignment failed.")
+            print(f"No overlaps found between image {i-1} and {i}. Alignment failed.")
+            break
 
         offset, merge_y1 = result
 
@@ -192,9 +198,6 @@ def align_images_to_base(ocr_results, folder_path, annotated_dir):
 
         # Combine images using merge point
         curr_img = image_files[i]
-
-        # Create new canvas size to accommodate combined image
-        current_height = combined_img.height
 
         new_canvas = Image.new('RGB', (combined_img.width, int(cumulative_offset + curr_img.height)), 'white')
 
@@ -253,6 +256,123 @@ def align_images_to_base(ocr_results, folder_path, annotated_dir):
     return aligned_results
 
 
+def shade_comment_regions(aligned_results, annotated_dir):
+    """
+    Find comment regions using 'beantwoorden' buttons and 'meest relevant' boundary,
+    then create a shaded visualization showing comment boundaries.
+
+    Args:
+        aligned_results: List of aligned OCR results with unified coordinates
+        annotated_dir: Path to output directory
+    """
+    print("🔍 Finding comment regions...")
+
+    # Collect all detections from all images
+    all_detections = []
+    for image_result in aligned_results:
+        all_detections.extend(image_result["detections"])
+
+    # Step 1: Find all 'beantwoorden' buttons
+    beantwoorden_buttons = []
+    for detection in all_detections:
+        if "beantwoorden" in detection["text"].lower():
+            beantwoorden_buttons.append(detection)
+
+    if not beantwoorden_buttons:
+        print("❌ No 'beantwoorden' buttons found")
+        return
+
+    print(f"📍 Found {len(beantwoorden_buttons)} 'beantwoorden' buttons")
+
+    # Calculate median height (y2 - y1) and x1 coordinates
+    heights = [det["bbox"]["y2"] - det["bbox"]["y1"] for det in beantwoorden_buttons]
+    x1_coords = [det["bbox"]["x1"] for det in beantwoorden_buttons]
+
+    import statistics
+    median_height = statistics.median(heights)
+    median_x1 = statistics.median(x1_coords)
+
+    print(f"📐 Median height: {median_height:.1f}px, median x1: {median_x1:.1f}px")
+
+    # Filter buttons within thresholds
+    filtered_buttons = []
+    for detection in beantwoorden_buttons:
+        height = detection["bbox"]["y2"] - detection["bbox"]["y1"]
+        x1 = detection["bbox"]["x1"]
+
+        if abs(height - median_height) <= 5 and abs(x1 - median_x1) <= 50:
+            filtered_buttons.append(detection)
+
+    print(f"✅ Filtered to {len(filtered_buttons)} 'beantwoorden' buttons within thresholds")
+
+    # Step 2: Find 'meest relevant' starting point
+    meest_relevant = None
+    for detection in all_detections:
+        if "meest relevant" in detection["text"].lower():
+            meest_relevant = detection
+            break
+
+    if not meest_relevant:
+        print("❌ No 'meest relevant' text found")
+        return
+
+    start_y = meest_relevant["bbox"]["y2"]
+    print(f"📍 Found 'meest relevant' starting at Y: {start_y:.1f}px")
+
+    # Step 3: Define comment regions
+    # Sort filtered buttons by Y-coordinate
+    filtered_buttons.sort(key=lambda det: det["bbox"]["y2"])
+
+    comment_regions = []
+    current_y = start_y
+
+    for button in filtered_buttons:
+        end_y = button["bbox"]["y2"]
+        if end_y > current_y:  # Only add regions that have positive height
+            comment_regions.append({
+                "start_y": current_y,
+                "end_y": end_y,
+                "button": button
+            })
+            current_y = end_y
+
+    print(f"📝 Created {len(comment_regions)} comment regions")
+
+    # Step 4: Create shaded visualization
+    combined_path = annotated_dir / "combined.png"
+    if not combined_path.exists():
+        print("❌ combined.png not found")
+        return
+
+    # Load combined image
+    combined_img = Image.open(combined_path)
+    draw = ImageDraw.Draw(combined_img)
+
+    # Draw colored borders around each comment region
+    border_color = "blue"
+    border_width = 3
+
+    for i, region in enumerate(comment_regions):
+        # Draw rectangle border for the comment region
+        # Use full width of the image
+        x1 = POST_BOUNDARY_X1
+        x2 = POST_BOUNDARY_X2
+        y1 = int(region["start_y"])
+        y2 = int(region["end_y"])
+
+        # Draw border
+        draw.rectangle([x1, y1, x2, y2], outline=border_color, width=border_width)
+
+        print(f"   Region {i+1}: Y {y1} -> {y2} (height: {y2-y1}px)")
+
+    # Save shaded image
+    shaded_path = annotated_dir / "combined_shaded.png"
+    combined_img.save(shaded_path)
+    print(f"🎨 Comment regions shaded and saved: {shaded_path}")
+
+    return comment_regions
+
+
 def main():
     parser = argparse.ArgumentParser(description='OCR processor for Facebook screenshots')
     parser.add_argument('folder', help='Folder containing ordered images (0.png, 1.png, etc.)')
@@ -304,7 +424,7 @@ def main():
             y1, y2 = min(y_coords), max(y_coords)
 
             # Check if bounding box is entirely within content area
-            if (x1 >= 280 and x2 <= 1020 and y1 >= 90 and y2 <= 580):
+            if (x1 >= POST_BOUNDARY_X1 and x2 <= POST_BOUNDARY_X2 and y1 >= POST_BOUNDARY_Y1 and y2 <= POST_BOUNDARY_Y2):
                 filtered_result.append((bbox, text, confidence))
 
         # Use filtered result for all further processing
@@ -369,6 +489,9 @@ def main():
 
     # Align all images to unified coordinate system
     aligned_results = align_images_to_base(ocr_results, folder_path, annotated_dir)
+
+    # Create comment region visualization
+    shade_comment_regions(aligned_results, annotated_dir)
 
     # Save aligned OCR results as JSON
     json_file = annotated_dir / "ocr_results.json"
