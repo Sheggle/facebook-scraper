@@ -58,6 +58,7 @@ def apply_offset(image_data, y_offset):
 def find_y_offset(prev_image, curr_image):
     """
     Find Y-coordinate offset between consecutive images using text overlaps.
+    Only considers unique texts within each image for reliable alignment.
     Returns tuple (offset, merge_y1) if overlaps are found, (None, None) if no valid overlaps exist.
     merge_y1 is the Y1 coordinate where images should be merged.
     """
@@ -67,18 +68,41 @@ def find_y_offset(prev_image, curr_image):
     if not prev_detections or not curr_detections:
         return None, None
 
-    used_prev_indices = set()
+    # Filter to only unique texts within each image
+    prev_unique = {}  # text -> detection
+    for det in prev_detections:
+        text = det["text"]
+        if text not in prev_unique:
+            prev_unique[text] = det
+        else:
+            # Remove duplicates by setting to None
+            prev_unique[text] = None
 
-    for curr_det in curr_detections:
+    curr_unique = {}  # text -> detection
+    for det in curr_detections:
+        text = det["text"]
+        if text not in curr_unique:
+            curr_unique[text] = det
+        else:
+            # Remove duplicates by setting to None
+            curr_unique[text] = None
+
+    # Filter out None values (duplicates)
+    prev_unique = {k: v for k, v in prev_unique.items() if v is not None}
+    curr_unique = {k: v for k, v in curr_unique.items() if v is not None}
+
+    used_prev_texts = set()
+
+    for curr_text, curr_det in curr_unique.items():
         best_match = None
         best_score = 0
 
-        for prev_idx, prev_det in enumerate(prev_detections):
-            if prev_idx in used_prev_indices:
+        for prev_text, prev_det in prev_unique.items():
+            if prev_text in used_prev_texts:
                 continue
 
             # Check text similarity (require 0.9 minimum)
-            score = text_similarity(curr_det["text"], prev_det["text"])
+            score = text_similarity(curr_text, prev_text)
             if score < 0.9:
                 continue
 
@@ -88,12 +112,12 @@ def find_y_offset(prev_image, curr_image):
                 continue
 
             if score > best_score:
-                best_match = (prev_idx, prev_det)
+                best_match = (prev_text, prev_det)
                 best_score = score
 
         if best_match:
-            prev_idx, prev_det = best_match
-            used_prev_indices.add(prev_idx)
+            prev_text, prev_det = best_match
+            used_prev_texts.add(prev_text)
 
             # Calculate y_mid for both detections
             curr_y_mid = (curr_det["bbox"]["y1"] + curr_det["bbox"]["y2"]) / 2
@@ -188,7 +212,6 @@ def align_images_to_base(ocr_results, folder_path, annotated_dir):
         new_canvas.paste(cropped_curr, (0, cropped_combined.height))
 
         # Draw boundary line
-        from PIL import ImageDraw
         draw = ImageDraw.Draw(new_canvas)
         draw.line([(0, cropped_combined.height), (new_canvas.width, cropped_combined.height)], fill='red', width=2)
 
