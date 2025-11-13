@@ -225,52 +225,134 @@ def align_images_to_base(ocr_results, folder_path, annotated_dir):
     combined_img.save(combined_path)
     print(f"🖼️  Combined image saved: {combined_path}")
 
-    # Draw all aligned bounding boxes on the combined image
-    print("🎯 Drawing aligned bounding boxes on combined image...")
+    # Flatten all detections since they're now in unified coordinate system
+    all_detections = []
+    for image_result in aligned_results:
+        all_detections.extend(image_result["detections"])
+
+    print(f"✅ Successfully aligned {len(aligned_results)} images to unified coordinate system")
+    print(f"📦 Total detections in unified system: {len(all_detections)}")
+    return all_detections
+
+
+def draw_bounding_boxes_on_combined(deduplicated_detections, annotated_dir):
+    """
+    Draw deduplicated bounding boxes on the combined image.
+
+    Args:
+        deduplicated_detections: Flat list of deduplicated detections
+        annotated_dir: Path to output directory
+    """
+    print("🎯 Drawing deduplicated bounding boxes on combined image...")
+
+    combined_path = annotated_dir / "combined.png"
+    if not combined_path.exists():
+        print("❌ combined.png not found")
+        return
+
+    # Load combined image
+    combined_img = Image.open(combined_path)
     draw = ImageDraw.Draw(combined_img)
     font = ImageFont.truetype("Arial.ttf", 16)
 
-    # Draw bounding boxes for all aligned detections
-    total_boxes = 0
-    for image_idx, image_result in enumerate(aligned_results):
-        for detection in image_result["detections"]:
-            bbox = detection["bbox"]
-            text = detection["text"]
+    # Draw bounding boxes for all deduplicated detections
+    for detection in deduplicated_detections:
+        bbox = detection["bbox"]
+        text = detection["text"]
 
-            # Draw red bounding box
-            draw.rectangle([bbox["x1"], bbox["y1"], bbox["x2"], bbox["y2"]],
-                          outline="red", width=2)
+        # Draw red bounding box
+        draw.rectangle([bbox["x1"], bbox["y1"], bbox["x2"], bbox["y2"]],
+                      outline="red", width=2)
 
-            # Draw text above the bounding box
-            text_y = max(0, bbox["y1"] - 20)  # Position above box, but not off screen
-            draw.text((bbox["x1"], text_y), text, fill="red", font=font)
-
-            total_boxes += 1
+        # Draw text above the bounding box
+        text_y = max(0, bbox["y1"] - 20)  # Position above box, but not off screen
+        draw.text((bbox["x1"], text_y), text, fill="red", font=font)
 
     # Save annotated combined image
     annotated_combined_path = annotated_dir / "combined_with_boxes.png"
     combined_img.save(annotated_combined_path)
-    print(f"📦 Combined image with {total_boxes} bounding boxes saved: {annotated_combined_path}")
-
-    print(f"✅ Successfully aligned {len(aligned_results)} images to unified coordinate system")
-    return aligned_results
+    print(f"📦 Combined image with {len(deduplicated_detections)} deduplicated bounding boxes saved: {annotated_combined_path}")
 
 
-def shade_comment_regions(aligned_results, annotated_dir):
+def deduplicate_bboxes(all_detections):
+    """
+    Remove smaller bounding boxes that are covered by more than 50% by larger ones.
+    Uses efficient Y-overlap filtering to avoid unnecessary comparisons.
+
+    Args:
+        all_detections: Flat list of detections with unified coordinates
+
+    Returns:
+        Flat list of deduplicated detections
+    """
+    print("🔄 Deduplicating overlapping bounding boxes...")
+    print(f"📦 Total detections before deduplication: {len(all_detections)}")
+
+    # Sort by y1 for efficient Y-overlap checking
+    all_detections.sort(key=lambda x: x["bbox"]["y1"])
+
+    # Track which detections to keep
+    keep_indices = set(range(len(all_detections)))
+
+    for i in range(len(all_detections)):
+        if i not in keep_indices:
+            continue
+
+        det1 = all_detections[i]
+        bbox1 = det1["bbox"]
+        area1 = (bbox1["x2"] - bbox1["x1"]) * (bbox1["y2"] - bbox1["y1"])
+
+        # Only check detections that could overlap in Y dimension
+        for j in range(i + 1, len(all_detections)):
+            if j not in keep_indices:
+                continue
+
+            det2 = all_detections[j]
+            bbox2 = det2["bbox"]
+
+            # Early termination: if det2.y1 >= det1.y2, no more overlaps possible
+            if bbox2["y1"] >= bbox1["y2"]:
+                break
+
+            # Check Y-overlap condition: det2.y1 < det1.y2 and det2.y2 > det1.y1
+            if bbox2["y2"] <= bbox1["y1"]:
+                continue
+
+            area2 = (bbox2["x2"] - bbox2["x1"]) * (bbox2["y2"] - bbox2["y1"])
+
+            # Calculate intersection
+            x_overlap = max(0, min(bbox1["x2"], bbox2["x2"]) - max(bbox1["x1"], bbox2["x1"]))
+            y_overlap = max(0, min(bbox1["y2"], bbox2["y2"]) - max(bbox1["y1"], bbox2["y1"]))
+            intersection = x_overlap * y_overlap
+
+            # Check if smaller box is covered by more than 50%
+            if area1 < area2:
+                coverage = intersection / area1 if area1 > 0 else 0
+                if coverage > 0.5:
+                    keep_indices.discard(i)
+                    break
+            else:
+                coverage = intersection / area2 if area2 > 0 else 0
+                if coverage > 0.5:
+                    keep_indices.discard(j)
+
+    # Return only the kept detections as a flat list
+    deduplicated_detections = [all_detections[i] for i in keep_indices]
+    print(f"📦 Detections after deduplication: {len(deduplicated_detections)}")
+
+    return deduplicated_detections
+
+
+def shade_comment_regions(all_detections, annotated_dir):
     """
     Find comment regions using 'beantwoorden' buttons and 'meest relevant' boundary,
     then create a shaded visualization showing comment boundaries.
 
     Args:
-        aligned_results: List of aligned OCR results with unified coordinates
+        all_detections: Flat list of detections with unified coordinates
         annotated_dir: Path to output directory
     """
     print("🔍 Finding comment regions...")
-
-    # Collect all detections from all images
-    all_detections = []
-    for image_result in aligned_results:
-        all_detections.extend(image_result["detections"])
 
     # Step 1: Find all 'beantwoorden' buttons
     beantwoorden_buttons = []
@@ -488,15 +570,21 @@ def main():
         ocr_results.append(image_data)
 
     # Align all images to unified coordinate system
-    aligned_results = align_images_to_base(ocr_results, folder_path, annotated_dir)
+    all_detections = align_images_to_base(ocr_results, folder_path, annotated_dir)
+
+    # Deduplicate overlapping bounding boxes
+    deduplicated_detections = deduplicate_bboxes(all_detections)
+
+    # Draw deduplicated bounding boxes on combined image
+    draw_bounding_boxes_on_combined(deduplicated_detections, annotated_dir)
 
     # Create comment region visualization
-    shade_comment_regions(aligned_results, annotated_dir)
+    shade_comment_regions(deduplicated_detections, annotated_dir)
 
-    # Save aligned OCR results as JSON
+    # Save aligned and deduplicated OCR results as JSON
     json_file = annotated_dir / "ocr_results.json"
     with open(json_file, 'w', encoding='utf-8') as f:
-        json.dump(aligned_results, f, indent=2, ensure_ascii=False)
+        json.dump(deduplicated_detections, f, indent=2, ensure_ascii=False)
 
     # combine images
 
