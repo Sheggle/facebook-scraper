@@ -411,11 +411,41 @@ def shade_comment_regions(all_detections, annotated_dir):
     for button in filtered_buttons:
         end_y = button["bbox"]["y2"]
         if end_y > current_y:  # Only add regions that have positive height
-            comment_regions.append({
+            region = {
                 "start_y": current_y,
                 "end_y": end_y,
                 "button": button
-            })
+            }
+
+            # Check for 'antwoord' boxes near the top of this region
+            region_boxes = [det for det in all_detections
+                          if current_y <= det["bbox"]["y1"] <= end_y]
+
+            if region_boxes:
+                # Find minimum y1 in this region
+                min_y1 = min(det["bbox"]["y1"] for det in region_boxes)
+
+                # Find boxes within 10px of minimum y1
+                top_boxes = [det for det in region_boxes
+                           if det["bbox"]["y1"] <= min_y1 + 10]
+
+                # Check for 'antwoord' in top boxes
+                antwoord_boxes = [det for det in top_boxes
+                                if 'antwoord' in det["text"].lower()]
+
+                if antwoord_boxes:
+                    # Use y2 of first antwoord box as the actual top
+                    antwoord_y2 = antwoord_boxes[0]["bbox"]["y2"]
+                    region["start_y"] = antwoord_y2
+                    print(f"   📝 Adjusted region top from {current_y:.1f} to {antwoord_y2:.1f} due to 'antwoord' box")
+
+            # Parse comment from this region
+            final_region_boxes = [det for det in all_detections
+                                 if region["start_y"] <= det["bbox"]["y1"] <= end_y]
+            comment_data = parse_comment(final_region_boxes)
+            print(comment_data)
+
+            comment_regions.append(region)
             current_y = end_y
 
     print(f"📝 Created {len(comment_regions)} comment regions")
@@ -453,6 +483,109 @@ def shade_comment_regions(all_detections, annotated_dir):
     print(f"🎨 Comment regions shaded and saved: {shaded_path}")
 
     return comment_regions
+
+
+def parse_comment(region_boxes):
+    """
+    Parse a comment region to extract username and date.
+
+    Args:
+        region_boxes: List of detections within this comment region
+
+    Returns:
+        Dict with username and date
+    """
+    if not region_boxes:
+        return {"username": "", "date": ""}
+
+    # Find minimum y1 in this region (top row)
+    min_y1 = min(det["bbox"]["y1"] for det in region_boxes)
+
+    # Find boxes within 10px of minimum y1 (top row)
+    top_boxes = [det for det in region_boxes
+                if det["bbox"]["y1"] <= min_y1 + 10]
+
+    username = ""
+    if top_boxes:
+        # Sort top boxes by x1 coordinate (left to right)
+        top_boxes.sort(key=lambda det: det["bbox"]["x1"])
+        # Concatenate text from top boxes to form username
+        username_parts = [det["text"] for det in top_boxes]
+        username = " ".join(username_parts)
+
+    # Find maximum y1 in this region (bottom row)
+    max_y1 = max(det["bbox"]["y1"] for det in region_boxes)
+
+    # Find boxes within 10px of maximum y1 (bottom row)
+    bottom_boxes = [det for det in region_boxes
+                   if det["bbox"]["y1"] >= max_y1 - 10]
+
+    date = ""
+    if bottom_boxes:
+        # Filter out UI elements
+        filtered_bottom_boxes = [det for det in bottom_boxes
+                               if not any(word in det["text"].lower()
+                                        for word in ['leuk', 'beantwoorden', 'bewerkt'])]
+
+        if filtered_bottom_boxes:
+            # Sort by x1 coordinate (left to right)
+            filtered_bottom_boxes.sort(key=lambda det: det["bbox"]["x1"])
+            # Concatenate text to form date
+            date_parts = [det["text"] for det in filtered_bottom_boxes]
+            date = " ".join(date_parts)
+
+    # Get leftover boxes (not top or bottom rows)
+    leftover_boxes = []
+    for det in region_boxes:
+        y1 = det["bbox"]["y1"]
+        # Skip if it's in top row or bottom row
+        if (top_boxes and any(abs(y1 - top_det["bbox"]["y1"]) <= 10 for top_det in top_boxes)) or \
+           (bottom_boxes and any(abs(y1 - bottom_det["bbox"]["y1"]) <= 10 for bottom_det in bottom_boxes)):
+            continue
+        leftover_boxes.append(det)
+
+    # Create readable text from leftover boxes
+    text = create_readable_text(leftover_boxes)
+
+    return {"username": username, "date": date, "text": text}
+
+
+def create_readable_text(boxes):
+    """
+    Process boxes row by row to create readable text.
+
+    Args:
+        boxes: List of detection boxes to process
+
+    Returns:
+        String with readable text
+    """
+    if not boxes:
+        return ""
+
+    remaining_boxes = boxes.copy()
+    text_lines = []
+
+    while remaining_boxes:
+        # Find minimum y1 in remaining boxes
+        min_y1 = min(det["bbox"]["y1"] for det in remaining_boxes)
+
+        # Get current row (boxes within 10px of min_y1)
+        current_row = [det for det in remaining_boxes
+                      if det["bbox"]["y1"] <= min_y1 + 10]
+
+        # Sort current row by x1 coordinate (left to right)
+        current_row.sort(key=lambda det: det["bbox"]["x1"])
+
+        # Extract text from current row
+        row_text = " ".join(det["text"] for det in current_row)
+        text_lines.append(row_text)
+
+        # Remove processed boxes from remaining_boxes
+        for det in current_row:
+            remaining_boxes.remove(det)
+
+    return " ".join(text_lines)
 
 
 def main():
