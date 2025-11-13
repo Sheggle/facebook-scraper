@@ -445,6 +445,9 @@ def shade_comment_regions(all_detections, annotated_dir):
             comment_data = parse_comment(final_region_boxes)
             print(comment_data)
 
+            # Add parsed data to region
+            region["parsed"] = comment_data
+
             comment_regions.append(region)
             current_y = end_y
 
@@ -588,6 +591,78 @@ def create_readable_text(boxes):
     return " ".join(text_lines)
 
 
+def parse_post(all_detections):
+    """
+    Parse the main post content by finding the comments boundary and extracting author, date, and text.
+
+    Args:
+        all_detections: Flat list of all detections
+
+    Returns:
+        Dict with author, date, and text
+    """
+    import re
+
+    # Find box with pattern '^\d+ opmerkingen$'
+    comments_pattern = re.compile(r'^\d+ opmerkingen$')
+    comments_box = None
+
+    for detection in all_detections:
+        if comments_pattern.match(detection["text"].strip()):
+            comments_box = detection
+            break
+
+    if not comments_box:
+        print("❌ No comments pattern found")
+        return {"author": "", "date": "", "text": ""}
+
+    comments_y1 = comments_box["bbox"]["y1"]
+    print(f"📍 Found comments pattern at Y: {comments_y1:.1f}px")
+
+    # Get all boxes with y1 at least 10 lower than the comments box
+    post_boxes = [det for det in all_detections
+                  if det["bbox"]["y1"] <= comments_y1 - 10]
+
+    print(f"📦 Found {len(post_boxes)} post boxes")
+
+    if not post_boxes:
+        return {"author": "", "date": "", "text": ""}
+
+    # Sort all post boxes by y1 to process row by row
+    post_boxes.sort(key=lambda det: det["bbox"]["y1"])
+
+    # Extract first line (author)
+    min_y1 = post_boxes[0]["bbox"]["y1"]
+    first_line_boxes = [det for det in post_boxes
+                       if det["bbox"]["y1"] <= min_y1 + 10]
+    first_line_boxes.sort(key=lambda det: det["bbox"]["x1"])
+    author = " ".join(det["text"] for det in first_line_boxes)
+
+    # Remove first line boxes from post_boxes
+    remaining_boxes = [det for det in post_boxes if det not in first_line_boxes]
+
+    # Extract second line (date)
+    date = ""
+    if remaining_boxes:
+        second_min_y1 = min(det["bbox"]["y1"] for det in remaining_boxes)
+        second_line_boxes = [det for det in remaining_boxes
+                           if det["bbox"]["y1"] <= second_min_y1 + 10]
+        second_line_boxes.sort(key=lambda det: det["bbox"]["x1"])
+        date = " ".join(det["text"] for det in second_line_boxes)
+
+        # Remove second line boxes from remaining
+        remaining_boxes = [det for det in remaining_boxes if det not in second_line_boxes]
+
+    # Extract remaining text using create_readable_text
+    text = create_readable_text(remaining_boxes)
+
+    print(f"📝 Post author: {author}")
+    print(f"📅 Post date: {date}")
+    print(f"📄 Post text: {text}")
+
+    return {"author": author, "date": date, "text": text}
+
+
 def main():
     parser = argparse.ArgumentParser(description='OCR processor for Facebook screenshots')
     parser.add_argument('folder', help='Folder containing ordered images (0.png, 1.png, etc.)')
@@ -711,10 +786,36 @@ def main():
     # Draw deduplicated bounding boxes on combined image
     draw_bounding_boxes_on_combined(deduplicated_detections, annotated_dir)
 
-    # Create comment region visualization
-    shade_comment_regions(deduplicated_detections, annotated_dir)
+    # Create comment region visualization and get parsed comments
+    comment_regions = shade_comment_regions(deduplicated_detections, annotated_dir)
 
-    # Save aligned and deduplicated OCR results as JSON
+    # Parse the main post content
+    print("\n" + "="*60)
+    print("📰 PARSING POST CONTENT")
+    print("="*60)
+    post_data = parse_post(deduplicated_detections)
+
+    # Collect parsed comments
+    comments = []
+    if comment_regions:
+        for region in comment_regions:
+            if "parsed" in region:
+                comments.append(region["parsed"])
+
+    # Create structured data
+    structured_data = {
+        "post": post_data,
+        "comments": comments
+    }
+
+    # Save structured JSON
+    structured_json_file = annotated_dir / "parsed_data.json"
+    with open(structured_json_file, 'w', encoding='utf-8') as f:
+        json.dump(structured_data, f, indent=2, ensure_ascii=False)
+
+    print(f"💾 Structured data saved to: {structured_json_file}")
+
+    # Save aligned and deduplicated OCR results as JSON (for debugging)
     json_file = annotated_dir / "ocr_results.json"
     with open(json_file, 'w', encoding='utf-8') as f:
         json.dump(deduplicated_detections, f, indent=2, ensure_ascii=False)
