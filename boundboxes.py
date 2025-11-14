@@ -30,49 +30,6 @@ class Boundboxes:
     def __init__(self, boxes: list[Boundbox]) -> None:
         self.boxes = boxes
 
-    @classmethod
-    def from_ocr_results(cls, ocr_results, content_area_filter=True) -> Self:
-        """Create Boundboxes from EasyOCR results with optional content area filtering."""
-        boxes = []
-
-        for image_result in ocr_results:
-            for detection in image_result["detections"]:
-                bbox = detection["bbox"]
-
-                # Apply content area filter if enabled
-                if content_area_filter:
-                    if not (280 <= bbox["x1"] and bbox["x2"] <= 1020 and
-                           90 <= bbox["y1"] and bbox["y2"] <= 580):
-                        continue
-
-                box = Boundbox(
-                    x1=bbox["x1"],
-                    x2=bbox["x2"],
-                    y1=bbox["y1"],
-                    y2=bbox["y2"],
-                    text=detection["text"],
-                    confidence=detection["confidence"]
-                )
-                boxes.append(box)
-
-        return cls(boxes)
-
-    @classmethod
-    def from_flat_detections(cls, detections) -> Self:
-        """Create Boundboxes from flat list of detection dictionaries."""
-        boxes = []
-        for detection in detections:
-            bbox = detection["bbox"]
-            box = Boundbox(
-                x1=bbox["x1"],
-                x2=bbox["x2"],
-                y1=bbox["y1"],
-                y2=bbox["y2"],
-                text=detection["text"],
-                confidence=detection["confidence"]
-            )
-            boxes.append(box)
-        return cls(boxes)
 
     def apply_offset(self, y_offset: float) -> Self:
         """Return new Boundboxes with Y coordinates adjusted by offset."""

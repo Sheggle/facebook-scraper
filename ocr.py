@@ -4,12 +4,12 @@ OCR script to process screenshots from scraper.py output - REFACTORED VERSION.
 """
 
 import argparse
-import easyocr
 import json
 from pathlib import Path
 from PIL import Image, ImageDraw, ImageFont
 from difflib import SequenceMatcher
-from boundboxes import Boundboxes, Boundbox
+from boundboxes import Boundboxes
+from easy_ocr import EasyOCR
 
 POST_BOUNDARY_X1 = 280
 POST_BOUNDARY_X2 = 1020
@@ -393,9 +393,15 @@ def main():
         print(f"❌ Folder not found: {folder_path}")
         return
 
-    # Initialize EasyOCR reader for Dutch and English
-    print("🔍 Initializing EasyOCR (Dutch + English)...")
-    reader = easyocr.Reader(['en', 'nl'])
+    # Initialize EasyOCR wrapper with content filtering
+    ocr_reader = EasyOCR(
+        languages=['en', 'nl'],
+        content_filter=True,
+        filter_x1=POST_BOUNDARY_X1,
+        filter_x2=POST_BOUNDARY_X2,
+        filter_y1=POST_BOUNDARY_Y1,
+        filter_y2=POST_BOUNDARY_Y2
+    )
 
     # Get all PNG files and sort them numerically
     image_files = sorted(folder_path.glob("*.png"), key=lambda x: int(x.stem))
@@ -411,38 +417,17 @@ def main():
     annotated_dir.mkdir(parents=True, exist_ok=True)
     print(f"📁 Output folder: {annotated_dir}")
 
-    # Process each image and create Boundboxes immediately
+    # Process each image using EasyOCR wrapper
     ocr_boundboxes_list = []
 
     for image_file in image_files:
         print(f"\n📄 Processing: {image_file.name}")
 
-        # Run OCR on the image
-        result = reader.readtext(str(image_file))
-
-        # Convert to Boundboxes with content area filtering
-        boxes = []
-        for bbox, text, confidence in result:
-            # bbox is [(x1,y1), (x2,y2), (x3,y3), (x4,y4)]
-            x_coords = [point[0] for point in bbox]
-            y_coords = [point[1] for point in bbox]
-            x1, x2 = min(x_coords), max(x_coords)
-            y1, y2 = min(y_coords), max(y_coords)
-
-            # Apply content area filter
-            if (POST_BOUNDARY_X1 <= x1 and x2 <= POST_BOUNDARY_X2 and
-                POST_BOUNDARY_Y1 <= y1 and y2 <= POST_BOUNDARY_Y2):
-
-                box = Boundbox(
-                    x1=float(x1), y1=float(y1), x2=float(x2), y2=float(y2),
-                    text=text, confidence=float(confidence)
-                )
-                boxes.append(box)
-
-        boundboxes = Boundboxes(boxes)
+        # Process image with EasyOCR wrapper (returns Boundboxes directly)
+        boundboxes = ocr_reader(str(image_file))
         ocr_boundboxes_list.append(boundboxes)
 
-        print(f"✅ Extracted {len(boxes)} content-area detections")
+        print(f"✅ Extracted {len(boundboxes.boxes)} content-area detections")
 
     # Align images and create combined image
     aligned_boundboxes = align_and_combine_images(ocr_boundboxes_list, folder_path, annotated_dir)
