@@ -8,4 +8,6 @@ dependencies = [
     "playwright>=1.40.0",
     "asyncio",
     "easyocr>=1.7.2",
+    "pydantic>=2.12.4",
+    "dspy>=3.0.4",
 ]

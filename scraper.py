@@ -87,7 +87,7 @@ async def main():
         print("✅ Browser loaded with saved state")
         print(f"🔍 Searching for keyword: {args.keyword}")
 
-        search_url = f"https://www.facebook.com/search/posts/?q={args.keyword}"
+        search_url = f"https://www.facebook.com/search/posts/?q={args.keyword.replace(' ', '%20')}"
         await page.goto(search_url)
 
         # Wait for page to load
@@ -98,7 +98,7 @@ async def main():
         seen_texts = set()  # Track text we've seen for uniqueness check
         scroll_since_update = 0
 
-        while True:
+        while len(seen_texts) < 10:
             # Get all buttons
             buttons = await page.locator("div[role='button']").element_handles()
 
@@ -138,9 +138,4 @@ async def main():
 
 
 if __name__ == "__main__":
-    try:
-        asyncio.run(main())
-    except KeyboardInterrupt:
-        print("\n❌ Cancelled by user")
-    except Exception as e:
-        print(f"❌ Error: {e}")
+    asyncio.run(main())

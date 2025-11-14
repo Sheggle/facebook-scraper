@@ -1,159 +1,61 @@
-#!/usr/bin/env python3
-"""
-Facebook Scraper - Main CLI interface
-"""
-
-import asyncio
-import argparse
-import sys
+import dspy
+from schemas import Article
 import json
+import os
+from random import shuffle
+import subprocess
 from pathlib import Path
-from scraper.browser import FacebookBrowser
-from scraper.facebook import FacebookScraper
+import shutil
+from datetime import datetime
 
 
-async def scrape_facebook_post(url: str, scroll_jump_size: int = 3, scroll_wait_time: float = 1.5, max_scrolls: int = 100) -> None:
+lm = dspy.LM("openai/gpt-4o-mini", api_key=os.getenv("OPENAI_API_KEY"))
+dspy.configure(lm=lm)
+
+screenshots_dir = Path('screenshots')
+annotated_dir = Path('annotated')
+storage_dir = Path('storage2')
+
+
+class SeedSearch(dspy.Signature):
     """
-    Scrape a single Facebook post with comments.
-
-    Args:
-        url: Facebook post URL to scrape
-        scroll_jump_size: Number of wheel notches per scroll (default: 3)
-        scroll_wait_time: Wait time after each scroll in seconds (default: 1.5)
-        max_scrolls: Maximum number of scroll attempts (default: 100)
+    Create 5 search queries for facebook that are likely to find messages that are Rijswijk citizens reacting to the content of the article.
+    Start your queries with 'rijswijk', and aim for 3-5 words.
     """
-    print("🚀 Facebook Scraper Starting...")
-    print(f"🎯 Target URL: {url}")
-    print(f"⚙️  Scroll settings: {scroll_jump_size} notches, {scroll_wait_time}s wait, max {max_scrolls} scrolls")
-    print("-" * 60)
 
-    async with FacebookBrowser(scroll_jump_size=scroll_jump_size, scroll_wait_time=scroll_wait_time) as browser:
-        if not browser.page:
-            print("❌ Failed to initialize browser. Please run create_state.py first.")
-            return
-
-        scraper = FacebookScraper(browser, max_scroll_attempts=max_scrolls)
-
-        result = await scraper.scrape_post_with_comments(url)
-
-        # Save results to JSON file
-        results_dir = Path("results")
-        results_dir.mkdir(exist_ok=True)
-
-        from datetime import datetime
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        results_file = results_dir / f"scrape_results_{timestamp}.json"
-
-        with open(results_file, 'w') as f:
-            json.dump(result, f, indent=2)
-
-        print("\n" + "=" * 60)
-        print("📊 SCRAPING RESULTS")
-        print("=" * 60)
-        print(f"Success: {'✅ Yes' if result['success'] else '❌ No'}")
-        print(f"Screenshots taken: {len(result['screenshots'])}")
-        print(f"Errors: {len(result['errors'])}")
-
-        if result['screenshots']:
-            print("\n📸 Screenshots:")
-            for screenshot in result['screenshots']:
-                print(f"   - {screenshot}")
-
-        if result['errors']:
-            print("\n❌ Errors:")
-            for error in result['errors']:
-                print(f"   - {error}")
-
-        print(f"\n💾 Results saved to: {results_file}")
-        print("=" * 60)
+    article: Article = dspy.InputField()
+    search_queries: list[str] = dspy.OutputField()
 
 
-def validate_facebook_url(url: str) -> bool:
-    """
-    Validate that the provided URL is a Facebook URL.
+get_queries = dspy.Predict(SeedSearch)
+with open('unified_articles.json') as f:
+    articles = [Article.model_validate(article) for article in json.load(f)['articles']]
 
-    Args:
-        url: URL to validate
+os.makedirs(storage_dir, exist_ok=True)
 
-    Returns:
-        True if valid Facebook URL, False otherwise
-    """
-    facebook_domains = [
-        'facebook.com',
-        'www.facebook.com',
-        'm.facebook.com',
-        'mobile.facebook.com'
-    ]
+while True:
+    shuffle(articles)
+    article = articles[0]
+    print(article.title)
+    queries = get_queries(article=article).search_queries
+    print(f"Queries: {queries}")
+    shuffle(queries)
+    query = queries[0]
+    print(f"Chosen query: {query}")
+    snake_query = '_'.join(query.split())
+    cmd = ['uv', 'run', 'scraper.py', '--keyword', f"'{query}'"]
+    subprocess.run(cmd)
+    for dir in os.listdir('screenshots'):
+        cmd = ['uv', 'run', 'ocr.py', str(screenshots_dir / dir)]
+        subprocess.run(cmd)
+        with open(annotated_dir / dir / 'parsed_data.json', 'r') as f:
+            data = json.load(f)
+        data['query'] = query
+        data['scrape_date'] = str(datetime.now())
+        with open(storage_dir / f'{dir}.json', 'w') as f:
+            json.dump(data, f, indent=2)
 
-    return any(domain in url.lower() for domain in facebook_domains)
-
-
-def main():
-    """Main CLI entry point."""
-    parser = argparse.ArgumentParser(
-        description='Facebook Post Scraper - Extract posts and comments using browser automation'
-    )
-    parser.add_argument(
-        'url',
-        help='Facebook post URL to scrape'
-    )
-    parser.add_argument(
-        '--verbose', '-v',
-        action='store_true',
-        help='Enable verbose output'
-    )
-
-    # Scroll configuration options
-    parser.add_argument(
-        '--scroll-jump-size', '-s',
-        type=int,
-        default=3,
-        help='Number of wheel notches per scroll (default: 3)'
-    )
-    parser.add_argument(
-        '--scroll-wait-time', '-w',
-        type=float,
-        default=1.5,
-        help='Wait time after each scroll in seconds (default: 1.5)'
-    )
-    parser.add_argument(
-        '--max-scrolls', '-m',
-        type=int,
-        default=100,
-        help='Maximum number of scroll attempts (default: 100)'
-    )
-
-    args = parser.parse_args()
-
-    # Validate URL
-    if not validate_facebook_url(args.url):
-        print("❌ Error: Please provide a valid Facebook URL")
-        print("   Example: https://www.facebook.com/page/posts/123456789")
-        sys.exit(1)
-
-    # Check if browser state exists
-    state_file = Path("browser_state/facebook_state.json")
-    if not state_file.exists():
-        print("❌ No Facebook session found!")
-        print("Please run the following command first to log in:")
-        print("   python create_state.py")
-        sys.exit(1)
-
-    try:
-        # Run the scraper with configuration options
-        asyncio.run(scrape_facebook_post(
-            args.url,
-            scroll_jump_size=args.scroll_jump_size,
-            scroll_wait_time=args.scroll_wait_time,
-            max_scrolls=args.max_scrolls
-        ))
-    except KeyboardInterrupt:
-        print("\n❌ Scraping cancelled by user")
-        sys.exit(1)
-    except Exception as e:
-        print(f"❌ Unexpected error: {e}")
-        sys.exit(1)
-
-
-if __name__ == "__main__":
-    main()
+    if os.path.exists(annotated_dir):
+        shutil.rmtree(annotated_dir)
+    if os.path.exists(screenshots_dir):
+        shutil.rmtree(screenshots_dir)
