@@ -6,7 +6,7 @@ using bounding box detection to find Y-coordinate offsets between consecutive im
 """
 
 from difflib import SequenceMatcher
-from boundboxes import Boundboxes
+from .boundboxes import Boundboxes
 
 
 def text_similarity(text1, text2):

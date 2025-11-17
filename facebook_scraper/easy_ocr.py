@@ -5,7 +5,7 @@ EasyOCR wrapper that outputs Boundboxes directly.
 
 import easyocr
 from pathlib import Path
-from boundboxes import Boundboxes, Boundbox
+from .boundboxes import Boundboxes, Boundbox
 
 
 class EasyOCR:

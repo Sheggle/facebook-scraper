@@ -46,7 +46,7 @@ while True:
     cmd = ['uv', 'run', 'scraper.py', '--keyword', f"'{query}'"]
     subprocess.run(cmd)
     for dir in os.listdir('screenshots'):
-        cmd = ['uv', 'run', 'ocr.py', str(screenshots_dir / dir)]
+        cmd = ['uv', 'run', 'run_ocr.py', str(screenshots_dir / dir)]
         subprocess.run(cmd)
         with open(annotated_dir / dir / 'parsed_data.json', 'r') as f:
             data = json.load(f)
