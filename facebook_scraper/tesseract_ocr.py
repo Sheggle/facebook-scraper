@@ -11,26 +11,18 @@ from .boundboxes import Boundboxes, Boundbox
 
 class TesseractOCR:
     """
-    Tesseract OCR wrapper that processes images and returns Boundboxes with optional content filtering.
+    Tesseract OCR wrapper that processes images and returns Boundboxes.
     """
 
-    def __init__(self, languages=['eng', 'nld'], content_filter=True,
-                 filter_x1=280, filter_x2=1020, filter_y1=90, filter_y2=580):
+    def __init__(self, languages=['eng', 'nld']):
         """
         Initialize Tesseract OCR.
 
         Args:
             languages: List of language codes for OCR recognition ('eng' for English, 'nld' for Dutch)
-            content_filter: Whether to apply content area filtering
-            filter_x1, filter_x2, filter_y1, filter_y2: Content area boundaries
         """
         print(f"🔍 Initializing Tesseract OCR ({' + '.join(languages)})...")
         self.languages = '+'.join(languages)
-        self.content_filter = content_filter
-        self.filter_x1 = filter_x1
-        self.filter_x2 = filter_x2
-        self.filter_y1 = filter_y1
-        self.filter_y2 = filter_y2
 
         # Configure Tesseract for better accuracy
         self.config = '--oem 3 --psm 6'  # LSTM OCR Engine Mode, single uniform block
@@ -95,12 +87,6 @@ class TesseractOCR:
             if confidence < 0.1:
                 continue
 
-            # Apply content area filter if enabled
-            if self.content_filter:
-                if not (self.filter_x1 <= x1 and x2 <= self.filter_x2 and
-                        self.filter_y1 <= y1 and y2 <= self.filter_y2):
-                    continue
-
             box = Boundbox(
                 x1=float(x1), y1=float(y1), x2=float(x2), y2=float(y2),
                 text=text, confidence=float(confidence)
@@ -126,16 +112,6 @@ class TesseractOCR:
             print(f"✅ Extracted {len(boundboxes.boxes)} detections")
             results.append(boundboxes)
         return results
-
-    def set_content_filter(self, x1, x2, y1, y2):
-        """
-        Update content area filter boundaries.
-        """
-        self.filter_x1 = x1
-        self.filter_x2 = x2
-        self.filter_y1 = y1
-        self.filter_y2 = y2
-        print(f"📐 Updated content filter: ({x1}, {y1}) -> ({x2}, {y2})")
 
     def set_languages(self, languages):
         """

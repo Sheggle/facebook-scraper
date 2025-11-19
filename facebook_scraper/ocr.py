@@ -29,15 +29,8 @@ def main():
         print(f"❌ Folder not found: {folder_path}")
         return
 
-    # Initialize minimal PaddleOCR wrapper with content filtering
-    ocr_reader = PaddleOCRWrapper(
-        languages=['en', 'nl'],
-        content_filter=True,
-        filter_x1=POST_BOUNDARY_X1,
-        filter_x2=POST_BOUNDARY_X2,
-        filter_y1=POST_BOUNDARY_Y1,
-        filter_y2=POST_BOUNDARY_Y2
-    )
+    # Initialize minimal PaddleOCR wrapper
+    ocr_reader = PaddleOCRWrapper(languages=['en', 'nl'])
 
     # Get all PNG files and sort them numerically
     image_files = sorted(folder_path.glob("*.png"), key=lambda x: int(x.stem))
@@ -60,10 +53,13 @@ def main():
         print(f"\n📄 Processing: {image_file.name}")
 
         # Process image with PaddleOCR wrapper (returns Boundboxes directly)
-        boundboxes = ocr_reader(str(image_file))
+        all_boundboxes = ocr_reader(str(image_file))
+
+        # Apply content area filtering
+        boundboxes = all_boundboxes.filter_content_area()
         ocr_boundboxes_list.append(boundboxes)
 
-        print(f"✅ Extracted {len(boundboxes.boxes)} content-area detections")
+        print(f"✅ Extracted {len(all_boundboxes.boxes)} total detections, {len(boundboxes.boxes)} in content area")
 
     # Align images and create combined image
     aligned_boundboxes = align_and_combine_images(ocr_boundboxes_list, folder_path, annotated_dir)

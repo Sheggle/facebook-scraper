@@ -11,25 +11,17 @@ from .boundboxes import Boundboxes, Boundbox
 
 class PaddleOCRWrapper:
     """
-    Minimal PaddleOCR wrapper that processes images and returns Boundboxes with optional content filtering.
+    Minimal PaddleOCR wrapper that processes images and returns Boundboxes.
     """
 
-    def __init__(self, languages=['en', 'nl'], content_filter=True,
-                 filter_x1=280, filter_x2=1020, filter_y1=90, filter_y2=580):
+    def __init__(self, languages=['en', 'nl']):
         """
         Initialize PaddleOCR with minimal configuration.
 
         Args:
             languages: List of language codes for OCR recognition
-            content_filter: Whether to apply content area filtering
-            filter_x1, filter_x2, filter_y1, filter_y2: Content area boundaries
         """
         print(f"🔍 Initializing PaddleOCR ({' + '.join(languages)})...")
-        self.content_filter = content_filter
-        self.filter_x1 = filter_x1
-        self.filter_x2 = filter_x2
-        self.filter_y1 = filter_y1
-        self.filter_y2 = filter_y2
 
         # Initialize PaddleOCR with working configuration from 10-line script
         self.ocr = PaddleOCR(
@@ -84,12 +76,6 @@ class PaddleOCRWrapper:
                     y1 = min(point[1] for point in poly)
                     x2 = max(point[0] for point in poly)
                     y2 = max(point[1] for point in poly)
-
-                    # Apply content area filter if enabled
-                    if self.content_filter:
-                        if not (self.filter_x1 <= x1 and x2 <= self.filter_x2 and
-                                self.filter_y1 <= y1 and y2 <= self.filter_y2):
-                            continue
 
                     # Use actual confidence score
                     confidence = float(score) if score is not None else 0.9
