@@ -7,7 +7,7 @@ import argparse
 import json
 from pathlib import Path
 from .boundboxes import Boundboxes
-from .easy_ocr import EasyOCR
+from .paddle_ocr import PaddleOCRWrapper
 from .image_processing import align_and_combine_images, draw_bounding_boxes_on_combined
 from .facebook_processing import shade_comment_regions
 from .content_parser import parse_post
@@ -29,8 +29,8 @@ def main():
         print(f"❌ Folder not found: {folder_path}")
         return
 
-    # Initialize EasyOCR wrapper with content filtering
-    ocr_reader = EasyOCR(
+    # Initialize minimal PaddleOCR wrapper with content filtering
+    ocr_reader = PaddleOCRWrapper(
         languages=['en', 'nl'],
         content_filter=True,
         filter_x1=POST_BOUNDARY_X1,
@@ -59,7 +59,7 @@ def main():
     for image_file in image_files:
         print(f"\n📄 Processing: {image_file.name}")
 
-        # Process image with EasyOCR wrapper (returns Boundboxes directly)
+        # Process image with PaddleOCR wrapper (returns Boundboxes directly)
         boundboxes = ocr_reader(str(image_file))
         ocr_boundboxes_list.append(boundboxes)
 
