@@ -33,6 +33,7 @@ with open('unified_articles.json') as f:
 
 os.makedirs(storage_dir, exist_ok=True)
 
+counter = 1
 while True:
     shuffle(articles)
     article = articles[0]
@@ -55,7 +56,9 @@ while True:
         with open(storage_dir / f'{dir}.json', 'w') as f:
             json.dump(data, f, indent=2)
 
-    if os.path.exists(annotated_dir):
-        shutil.rmtree(annotated_dir)
-    if os.path.exists(screenshots_dir):
-        shutil.rmtree(screenshots_dir)
+    exit()
+
+    # if os.path.exists(annotated_dir):
+    #     shutil.rmtree(annotated_dir)
+    # if os.path.exists(screenshots_dir):
+    #     shutil.rmtree(screenshots_dir)

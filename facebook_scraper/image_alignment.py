@@ -21,35 +21,40 @@ def text_similarity(text1, text2):
 def find_alignment_offsets_boundboxes(boundboxes_list):
     """
     Find Y-coordinate offsets between consecutive Boundboxes using text overlaps.
-    Returns list of cumulative offsets to align all to base (first) image.
+    Returns (cumulative_offsets, match_positions) where match_positions are y1
+    coordinates of matches in the first image's reference frame.
     """
     if len(boundboxes_list) <= 1:
-        return [0.0]
+        return ([], [])
 
-    cumulative_offsets = [0.0]  # First image is the base
+    cumulative_offsets = []
+    match_positions = []
 
     for i in range(1, len(boundboxes_list)):
         prev_boxes = boundboxes_list[i-1]
         curr_boxes = boundboxes_list[i]
 
         # Find overlapping text between consecutive images
-        offset = find_y_offset_boundboxes(prev_boxes, curr_boxes)
+        result = find_y_offset_boundboxes(prev_boxes, curr_boxes)
 
-        if offset is not None:
-            cumulative_offsets.append(cumulative_offsets[-1] + offset)
-            print(f"   Image {i}: offset = {offset:.1f}px (cumulative: {cumulative_offsets[-1]:.1f}px)")
+        if result is not None:
+            offset, match_y1 = result
+            cumulative_offsets.append(offset)
+            match_positions.append(match_y1)
+
+            print(f"   Image {i}: offset = {offset:.1f}px, match_y1 = {match_y1:.1f}px")
         else:
-            print(f"   Image {i}: No alignment found, using previous offset")
-            cumulative_offsets.append(cumulative_offsets[-1])
+            print(f"   Image {i}: No alignment found")
+            return (cumulative_offsets, match_positions)
 
-    return cumulative_offsets
+    return (cumulative_offsets, match_positions)
 
 
 def find_y_offset_boundboxes(prev_boundboxes: Boundboxes, curr_boundboxes: Boundboxes):
     """
     Find Y-coordinate offset between consecutive Boundboxes using text overlaps.
     Only considers unique texts within each image for reliable alignment.
-    Returns offset if overlaps are found, None if no valid overlaps exist.
+    Returns (offset, prev_y1) if overlaps are found, None if no valid overlaps exist.
     """
     if not prev_boundboxes.boxes or not curr_boundboxes.boxes:
         return None
@@ -103,13 +108,11 @@ def find_y_offset_boundboxes(prev_boundboxes: Boundboxes, curr_boundboxes: Bound
             prev_text, prev_box = best_match
             used_prev_texts.add(prev_text)
 
-            # Calculate y_mid for both detections
-            curr_y_mid = (curr_box.y1 + curr_box.y2) / 2
-            prev_y_mid = (prev_box.y1 + prev_box.y2) / 2
+            # Calculate offset using y1 (top points)
+            offset = prev_box.y1 - curr_box.y1
 
-            # Return the offset
-            offset = prev_y_mid - curr_y_mid
-            return offset
+            # Return both offset and the y1 position of the match in prev frame
+            return (offset, prev_box.y1)
 
     # No valid overlaps found
     return None

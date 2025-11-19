@@ -18,11 +18,6 @@ POST_BOUNDARY_Y1 = 90
 POST_BOUNDARY_Y2 = 580
 
 
-
-
-
-
-
 def main():
     parser = argparse.ArgumentParser(description='OCR processor for Facebook screenshots - REFACTORED VERSION')
     parser.add_argument('folder', help='Folder containing ordered images (0.png, 1.png, etc.)')

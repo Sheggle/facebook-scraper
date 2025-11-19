@@ -19,16 +19,19 @@ def align_and_combine_images(ocr_boundboxes_list, folder_path, annotated_dir):
     print("🔄 Aligning images using text overlaps...")
 
     # Find alignment offsets
-    offsets = find_alignment_offsets_boundboxes(ocr_boundboxes_list)
+    offsets, match_positions = find_alignment_offsets_boundboxes(ocr_boundboxes_list)
 
     # Apply offsets to create aligned boundboxes
     all_aligned_boxes = []
 
-    for i, (boundboxes, offset) in enumerate(zip(ocr_boundboxes_list, offsets)):
-        if offset != 0:
-            aligned_boundboxes = boundboxes.apply_offset(offset)
-        else:
-            aligned_boundboxes = boundboxes
+    # First image has no offset
+    all_aligned_boxes.extend(ocr_boundboxes_list[0].boxes)
+
+    # Apply offsets to remaining images
+    running_offset = 0.0
+    for boundboxes, offset in zip(ocr_boundboxes_list[1:], offsets):
+        running_offset += offset
+        aligned_boundboxes = boundboxes.apply_offset(running_offset)
         all_aligned_boxes.extend(aligned_boundboxes.boxes)
 
     # Create combined image (simplified version - just stacking)
@@ -39,19 +42,22 @@ def align_and_combine_images(ocr_boundboxes_list, folder_path, annotated_dir):
         return Boundboxes(all_aligned_boxes)
 
     # Load first image to get dimensions
-    first_img = Image.open(image_files[0])
-    combined_height = len(image_files) * first_img.height
-    combined_img = Image.new('RGB', (first_img.width, combined_height), 'white')
-
-    # Simple stacking for now - would need proper alignment for production
-    for i, img_file in enumerate(image_files):
-        img = Image.open(img_file)
-        y_pos = i * img.height
-        combined_img.paste(img, (0, y_pos))
+    img = Image.open(image_files[0])
+    running_offset = 0
+    for image_file, offset, match_pos in zip(image_files[1:], offsets, match_positions):
+        crop = img.crop((0, 0, img.width, int(running_offset + match_pos)))
+        new_img = Image.open(image_file)
+        running_offset += offset
+        new_height = running_offset + new_img.height
+        combined_img = Image.new('RGB', (img.width, int(new_height)), 'white')
+        combined_img.paste(crop, (0, 0))
+        insert_height = new_height - new_img.height + match_pos - offset
+        combined_img.paste(new_img.crop((0, int(match_pos - offset), new_img.width, new_img.height)), (0, int(insert_height)))
+        img = combined_img
 
     # Save combined image
     combined_path = annotated_dir / "combined.png"
-    combined_img.save(combined_path)
+    img.save(combined_path)
     print(f"🖼️  Combined image saved: {combined_path}")
 
     return Boundboxes(all_aligned_boxes)
