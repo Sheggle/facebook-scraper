@@ -56,6 +56,9 @@ def parse_post(boundboxes: Boundboxes):
     first_line = post_boundboxes.pop_top_line()
     author = first_line.to_text_line()
 
+    # Remove 'Volgen' from author name
+    author = author.replace('Volgen', '').strip()
+
     # Extract date from second line (remaining boxes after removing first line)
     remaining_boxes = [box for box in post_boundboxes.boxes if box not in first_line.boxes]
     if remaining_boxes:
